@@ -9,22 +9,8 @@ interface DataTableProps {
 export const DataTable: React.FC<DataTableProps> = ({ data }) => {
   if (data.length === 0) return null;
 
-  // Helper to calculate under 60 sum
-  const getUnder60 = (counts: any) => {
-    return (
-      (counts.score_50_59 || 0) +
-      (counts.score_40_49 || 0) +
-      (counts.score_30_39 || 0) +
-      (counts.score_20_29 || 0) +
-      (counts.score_10_19 || 0) +
-      (counts.score_0_9 || 0) +
-      (counts.score_under_60 || 0)
-    );
-  };
-
   const handleExportCSV = () => {
     // Requested columns: 교과목, 평균, 90~100, 80~89, 70~79, 60~69, 0~59
-    // Added '응시자' for completeness as it's standard, but prioritized the requested structure.
     const headers = [
       '교과목', '평균', '응시자', 
       '90~100', '80~89', '70~79', '60~69', '0~59'
@@ -38,7 +24,7 @@ export const DataTable: React.FC<DataTableProps> = ({ data }) => {
       item.gradeCounts.score_80_89,
       item.gradeCounts.score_70_79,
       item.gradeCounts.score_60_69,
-      getUnder60(item.gradeCounts)
+      item.gradeCounts.score_under_60
     ]);
 
     const csvContent = [
@@ -88,8 +74,6 @@ export const DataTable: React.FC<DataTableProps> = ({ data }) => {
           </thead>
           <tbody>
             {data.map((row, index) => {
-                const under60 = getUnder60(row.gradeCounts);
-                
                 return (
                     <tr key={index} className="border-b hover:bg-slate-50 transition-colors">
                         <td className="px-4 py-3 font-medium text-slate-900 sticky left-0 bg-white border-r border-slate-200 shadow-[4px_0_8px_-4px_rgba(0,0,0,0.1)]">
@@ -110,9 +94,9 @@ export const DataTable: React.FC<DataTableProps> = ({ data }) => {
                         <td className="px-4 py-3 text-center">{row.gradeCounts.score_70_79}</td>
                         <td className="px-4 py-3 text-center">{row.gradeCounts.score_60_69}</td>
                         
-                        {/* Aggregated Low Scores (0-59) */}
+                        {/* Low Scores (0-59) */}
                         <td className="px-4 py-3 text-center bg-red-50/50 text-red-600 font-medium">
-                            {under60}
+                            {row.gradeCounts.score_under_60}
                         </td>
                     </tr>
                 );

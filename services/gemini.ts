@@ -1,131 +1,131 @@
+import { GoogleGenAI } from "@google/genai";
 
-import { GoogleGenAI, Type, Schema } from "@google/genai";
-import { ExamData } from "../types";
-
-// Define the expected output schema
-const examDataSchema: Schema = {
-  type: Type.ARRAY,
-  description: "List of exam results for subjects found in the document.",
-  items: {
-    type: Type.OBJECT,
-    properties: {
-      subject: { type: Type.STRING, description: "The name of the subject (e.g., 수학1, 국어, 제조화학, 인공지능일반). EXTRACT EXACTLY AS SHOWN." },
-      average: { type: Type.NUMBER, description: "The average score (평균)." },
-      totalStudents: { type: Type.NUMBER, description: "Total number of students (응시자 or 합계)." },
-      gradeCounts: {
-        type: Type.OBJECT,
-        description: "Number of students in each score range. Use 0 if the specific range is not present.",
-        properties: {
-          score_90_100: { type: Type.INTEGER, description: "Count for 90-100 (90이상~100이하)" },
-          score_80_89: { type: Type.INTEGER, description: "Count for 80-89 (80이상~90미만)" },
-          score_70_79: { type: Type.INTEGER, description: "Count for 70-79" },
-          score_60_69: { type: Type.INTEGER, description: "Count for 60-69" },
-          score_50_59: { type: Type.INTEGER, description: "Count for 50-59" },
-          score_40_49: { type: Type.INTEGER, description: "Count for 40-49" },
-          score_30_39: { type: Type.INTEGER, description: "Count for 30-39" },
-          score_20_29: { type: Type.INTEGER, description: "Count for 20-29" },
-          score_10_19: { type: Type.INTEGER, description: "Count for 10-19" },
-          score_0_9: { type: Type.INTEGER, description: "Count for 0-9" },
-          score_under_60: { type: Type.INTEGER, description: "Explicit count for under 60 if grouped." }
-        }
-      }
+// API 키를 안전하게 가져오는 헬퍼 함수
+const getApiKey = () => {
+  // 1. Vite 환경 변수 확인 (Netlify 등)
+  try {
+    // @ts-ignore
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+      // @ts-ignore
+      if (import.meta.env.VITE_GEMINI_API_KEY) return import.meta.env.VITE_GEMINI_API_KEY;
+      // @ts-ignore
+      if (import.meta.env.API_KEY) return import.meta.env.API_KEY;
     }
-  }
+  } catch (e) {}
+
+  // 2. process.env 확인 (빌드 타임 치환)
+  try {
+    // @ts-ignore
+    if (typeof process !== 'undefined' && process.env) {
+       // @ts-ignore
+       if (process.env.API_KEY) return process.env.API_KEY;
+       // @ts-ignore
+       if (process.env.VITE_GEMINI_API_KEY) return process.env.VITE_GEMINI_API_KEY;
+    }
+  } catch (e) {}
+
+  return "";
 };
 
-export const extractDataFromImages = async (base64Images: string[]): Promise<ExamData[]> => {
-  let apiKey: string | undefined;
-
-  // DIRECT ACCESS: 
-  // We explicitly try to access process.env.API_KEY without checking if 'process' is defined first.
-  // This allows bundlers (like Vite/Webpack) to replace "process.env.API_KEY" with the actual string literal 
-  // at build time, even if the "process" global object does not exist in the browser.
-  try {
-    // @ts-ignore
-    apiKey = process.env.API_KEY;
-  } catch (e) {
-    // Ignore ReferenceError if process is not defined and not replaced
-    console.debug("process.env.API_KEY access failed (normal in local dev if not mocked)", e);
-  }
+export async function extractDataFromImages(images: string[]) {
+  const apiKey = getApiKey();
 
   if (!apiKey) {
-    console.error("API Key is missing. Value of process.env.API_KEY is undefined.");
-    throw new Error("API Key is missing. If you are on Netlify, go to Site Settings > Environment Variables and add 'API_KEY'.");
+    throw new Error("API 키를 찾을 수 없습니다. Netlify 설정에서 'VITE_GEMINI_API_KEY' 또는 'API_KEY'를 추가해주세요.");
   }
-  
-  const ai = new GoogleGenAI({ apiKey });
-  
-  // Create parts array from images
-  const parts = base64Images.map(img => ({
-    inlineData: {
-      mimeType: 'image/jpeg',
-      data: img
-    }
-  }));
 
-  // Add the prompt
-  parts.push({
-    // @ts-ignore
-    text: `Analyze the provided exam analysis documents images as a SINGLE continuous sequence.
+  // 최신 SDK 초기화 방식
+  const ai = new GoogleGenAI({ apiKey: apiKey });
+
+  // 텍스트 프롬프트 구성
+  const promptText = `
+    다음은 지필고사 분석 자료의 이미지들이다. 
+    이미지에 있는 "교과목별 성적 분석표" 또는 유사한 표를 찾아 다음 정보를 JSON 형식으로 정확하게 추출하라.
     
-    TASK:
-    Extract the subject name (교과목), average score (평균), total students (응시자/합계), and the distribution of students by score range.
+    [중요 규칙]
+    1. 과목명(subject)은 표에 적힌 텍스트 그대로 정확하게 추출해라. "인공지능일반"을 "생산관리"로 바꾸거나 추측하지 마라.
+    2. 모든 페이지를 분석하여 누락되는 과목이 없도록 해라. (제조화학, 기계일반 등 직업계고 전문교과 포함)
+    3. 점수 구간은 다음 필드에 매핑해라:
+       - "90이상 ~ 100이하" -> score_90_100
+       - "80이상 ~ 90미만" -> score_80_89
+       - "70이상 ~ 80미만" -> score_70_79
+       - "60이상 ~ 70미만" -> score_60_69
+       - 60점 미만의 모든 구간(50~60, 40~50, ... 0~10)의 합계 -> score_under_60
     
-    CRITICAL INSTRUCTIONS FOR ACCURACY:
-    1. **EXACT TEXT EXTRACTION**: Extract the subject name EXACTLY as written in the image. 
-       - Do NOT normalize, correct, or translate the subject name.
-       - Do NOT guess. If it says "인공지능일반", return "인공지능일반".
-       - If it says "제조화학", return "제조화학".
-       - If it says "생산관리", return "생산관리".
-       - Pay close attention to vocational subjects (e.g., 프로그래밍, 전자회로, 토목일반, 성공적인직업생활).
-    2. **SCAN ALL PAGES**: The data often spans multiple pages. Process every single page and extract every row.
-    3. **ALL ROWS**: Do not skip any rows. Even if the table format changes slightly, extract the data.
-    4. **COLUMNS**:
-       - Subject is usually the first column.
-       - Average is "평균".
-       - Total is "응시자" or "합계".
-       - Ranges are "90~100", "80~89", etc.
-    5. **Under 60**: If the table has a column for "0~59", put that value in 'score_under_60'. Otherwise, extract the specific 10-point ranges.`
-  });
+    [출력 스키마 - JSON 배열]
+    [
+      {
+        "subject": "과목명",
+        "average": 0.0,
+        "totalStudents": 0,
+        "gradeCounts": {
+          "score_90_100": 0,
+          "score_80_89": 0,
+          "score_70_79": 0,
+          "score_60_69": 0,
+          "score_under_60": 0
+        }
+      }
+    ]
+    
+    오직 JSON 배열만 반환하고, 마크다운 포맷(\`\`\`json)은 포함하지 마라.
+  `;
+
+  // 이미지 파트 구성
+  const parts = [
+    { text: promptText },
+    ...images.map((base64Data) => ({
+      inlineData: {
+        mimeType: "image/jpeg",
+        data: base64Data,
+      },
+    }))
+  ];
 
   try {
+    // 최신 SDK 모델 호출 (gemini-2.5-flash 사용)
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: { parts },
+      model: "gemini-2.5-flash", 
+      contents: { parts: parts },
       config: {
-        responseMimeType: 'application/json',
-        responseSchema: examDataSchema,
+        responseMimeType: "application/json"
       }
     });
 
-    let jsonText = response.text;
-    if (!jsonText) throw new Error("No data returned from AI.");
+    // 응답 텍스트 추출 및 정제
+    let text = response.text || "";
+    
+    // 마크다운 제거 (안전 장치)
+    text = text.replace(/```json/g, "").replace(/```/g, "").trim();
 
-    // Clean Markdown code blocks if present (common issue with some models)
-    if (jsonText.startsWith("```json")) {
-        jsonText = jsonText.replace(/^```json\s*/, "").replace(/\s*```$/, "");
-    } else if (jsonText.startsWith("```")) {
-        jsonText = jsonText.replace(/^```\s*/, "").replace(/\s*```$/, "");
-    }
+    const data = JSON.parse(text);
+    
+    // 데이터 보정 (API가 가끔 누락하는 필드 채우기)
+    const normalizedData = (Array.isArray(data) ? data : [data]).map((item: any) => ({
+        subject: item.subject || "Unknown",
+        average: Number(item.average) || 0,
+        totalStudents: Number(item.totalStudents) || 0,
+        gradeCounts: {
+            score_90_100: Number(item.gradeCounts?.score_90_100) || 0,
+            score_80_89: Number(item.gradeCounts?.score_80_89) || 0,
+            score_70_79: Number(item.gradeCounts?.score_70_79) || 0,
+            score_60_69: Number(item.gradeCounts?.score_60_69) || 0,
+            score_under_60: Number(item.gradeCounts?.score_under_60) || 
+                            (Number(item.gradeCounts?.score_50_59) || 0) + 
+                            (Number(item.gradeCounts?.score_40_49) || 0) +
+                            (Number(item.gradeCounts?.score_30_39) || 0) +
+                            (Number(item.gradeCounts?.score_20_29) || 0) +
+                            (Number(item.gradeCounts?.score_10_19) || 0) +
+                            (Number(item.gradeCounts?.score_0_9) || 0)
+        }
+    }));
 
-    try {
-        const rawData = JSON.parse(jsonText);
-        return rawData;
-    } catch (parseError) {
-        console.error("JSON Parse Error. Raw Text:", jsonText);
-        throw new Error("AI extraction failed: Invalid JSON response.");
-    }
+    return normalizedData;
 
   } catch (error: any) {
-    console.error("Gemini Extraction Error:", error);
-    // Enhance error message for UI
-    if (error.message.includes("401") || error.message.includes("key") || error.message.includes("API Key")) {
-        throw new Error("Authentication Failed: Invalid API Key. Please check Netlify Environment Variables.");
-    }
-    // Handle specific Google API errors
-    if (error.message.includes("503") || error.message.includes("overloaded")) {
-        throw new Error("AI Service Overloaded. Please try again in a few seconds.");
-    }
-    throw error;
+    console.error("Gemini Error:", error);
+    let errorMsg = "AI 분석 실패";
+    if (error.message) errorMsg += `: ${error.message}`;
+    throw new Error(errorMsg);
   }
-};
+}

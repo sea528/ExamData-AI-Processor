@@ -7,12 +7,14 @@ export interface ExamData {
     score_80_89: number;
     score_70_79: number;
     score_60_69: number;
-    score_50_59: number;
-    score_40_49: number;
-    score_30_39: number;
-    score_20_29: number;
-    score_10_19: number;
-    score_0_9: number;
+    score_under_60: number;
+    // Legacy fields for backward compatibility if needed, though we primarily use under_60 now
+    score_50_59?: number;
+    score_40_49?: number;
+    score_30_39?: number;
+    score_20_29?: number;
+    score_10_19?: number;
+    score_0_9?: number;
   };
 }
 
@@ -23,6 +25,6 @@ export interface ProcessingStatus {
 }
 
 export enum AnalysisType {
-  DETAILED = 'DETAILED', // For the per-subject detailed sheets
-  SUMMARY = 'SUMMARY'    // For the summary table sheets
+  DETAILED = 'DETAILED',
+  SUMMARY = 'SUMMARY'
 }
