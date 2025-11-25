@@ -1,0 +1,5 @@
+{
+  "name": "ExamData AI Processor",
+  "description": "A React application powered by Gemini 2.5 Flash to batch process PDF exam analysis documents. It converts PDF pages to images, extracts tabular grade data using AI, and aggregates it into a unified CSV-ready table.",
+  "requestFramePermissions": []
+}
