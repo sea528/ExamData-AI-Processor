@@ -1,40 +1,55 @@
 import { GoogleGenAI } from "@google/genai";
 
-// API 키를 안전하게 가져오는 헬퍼 함수
-const getApiKey = () => {
-  // 1. Vite 환경 변수 확인 (Netlify 등)
+// API 키를 안전하게 가져오고 정제하는 헬퍼 함수
+const getApiKey = (): string => {
+  let key = "";
+
+  // 1. Vite 환경 변수 확인 (Netlify, Vercel 등)
   try {
     // @ts-ignore
     if (typeof import.meta !== 'undefined' && import.meta.env) {
       // @ts-ignore
-      if (import.meta.env.VITE_GEMINI_API_KEY) return import.meta.env.VITE_GEMINI_API_KEY;
+      key = import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_API_KEY || import.meta.env.API_KEY || "";
+    }
+  } catch (e) {}
+
+  // 2. process.env 확인 (Node.js, Webpack, 일부 빌드 도구)
+  if (!key) {
+    try {
       // @ts-ignore
-      if (import.meta.env.API_KEY) return import.meta.env.API_KEY;
-    }
-  } catch (e) {}
+      if (typeof process !== 'undefined' && process.env) {
+         // @ts-ignore
+         key = process.env.VITE_GEMINI_API_KEY || process.env.VITE_API_KEY || process.env.API_KEY || "";
+      }
+    } catch (e) {}
+  }
 
-  // 2. process.env 확인 (빌드 타임 치환)
-  try {
-    // @ts-ignore
-    if (typeof process !== 'undefined' && process.env) {
-       // @ts-ignore
-       if (process.env.API_KEY) return process.env.API_KEY;
-       // @ts-ignore
-       if (process.env.VITE_GEMINI_API_KEY) return process.env.VITE_GEMINI_API_KEY;
+  // 3. 키 정제 (공백 및 따옴표 제거)
+  if (key) {
+    key = key.trim();
+    // 실수로 따옴표가 포함된 경우 제거 (예: '"AIza..."')
+    if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
+      key = key.slice(1, -1);
     }
-  } catch (e) {}
+  }
 
-  return "";
+  return key;
 };
 
 export async function extractDataFromImages(images: string[]) {
   const apiKey = getApiKey();
 
+  // 기본 유효성 검사
   if (!apiKey) {
-    throw new Error("API 키를 찾을 수 없습니다. Netlify 설정에서 'VITE_GEMINI_API_KEY' 또는 'API_KEY'를 추가해주세요.");
+    throw new Error("API 키가 설정되지 않았습니다. Netlify Site Settings > Environment Variables에서 'VITE_GEMINI_API_KEY' 값을 설정해주세요.");
   }
 
-  // 최신 SDK 초기화 방식
+  // 구글 API 키는 보통 'AIza'로 시작합니다. 간단한 형식 체크.
+  if (!apiKey.startsWith("AIza")) {
+     console.warn("경고: API 키가 'AIza'로 시작하지 않습니다. 키 값이 올바른지 확인하세요.");
+  }
+
+  // 최신 SDK 초기화
   const ai = new GoogleGenAI({ apiKey: apiKey });
 
   // 텍스트 프롬프트 구성
@@ -83,7 +98,7 @@ export async function extractDataFromImages(images: string[]) {
   ];
 
   try {
-    // 최신 SDK 모델 호출 (gemini-2.5-flash 사용)
+    // 모델 호출
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash", 
       contents: { parts: parts },
@@ -100,7 +115,7 @@ export async function extractDataFromImages(images: string[]) {
 
     const data = JSON.parse(text);
     
-    // 데이터 보정 (API가 가끔 누락하는 필드 채우기)
+    // 데이터 보정
     const normalizedData = (Array.isArray(data) ? data : [data]).map((item: any) => ({
         subject: item.subject || "Unknown",
         average: Number(item.average) || 0,
@@ -123,9 +138,22 @@ export async function extractDataFromImages(images: string[]) {
     return normalizedData;
 
   } catch (error: any) {
-    console.error("Gemini Error:", error);
-    let errorMsg = "AI 분석 실패";
-    if (error.message) errorMsg += `: ${error.message}`;
-    throw new Error(errorMsg);
+    console.error("Gemini API Error Detail:", error);
+    
+    let userMessage = "AI 분석 중 오류가 발생했습니다.";
+    
+    // 에러 메시지 분석
+    const errorString = error.toString();
+    if (errorString.includes("400") || errorString.includes("INVALID_ARGUMENT") || errorString.includes("API key not valid")) {
+      userMessage = "API 키가 올바르지 않습니다 (400 Invalid Argument). Netlify 설정의 API Key 값에 오타나 공백, 따옴표가 없는지 확인해주세요.";
+    } else if (errorString.includes("403")) {
+      userMessage = "API 키 권한이 없거나 만료되었습니다 (403 Forbidden).";
+    } else if (errorString.includes("429")) {
+      userMessage = "요청이 너무 많습니다 (429 Too Many Requests). 잠시 후 다시 시도해주세요.";
+    } else if (error.message) {
+      userMessage += ` (${error.message})`;
+    }
+
+    throw new Error(userMessage);
   }
 }
