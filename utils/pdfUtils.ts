@@ -1,3 +1,4 @@
+
 // Access the global pdfjsLib injected via index.html script tag
 declare global {
   interface Window {
@@ -12,53 +13,68 @@ export const convertPdfToImages = async (file: File): Promise<string[]> => {
       try {
         const typedarray = new Uint8Array(this.result as ArrayBuffer);
         
-        // Use the global window.pdfjsLib
+        // Ensure PDF.js is loaded
         if (!window.pdfjsLib) {
-            reject(new Error("PDF.js library not loaded"));
+            reject(new Error("PDF.js library is not loaded. Please check your internet connection or script tags."));
             return;
         }
 
-        const pdf = await window.pdfjsLib.getDocument(typedarray).promise;
+        // Explicitly force worker source if missing to prevent "FakeWorker" errors
+        if (!window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
+            window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        }
+
+        const loadingTask = window.pdfjsLib.getDocument(typedarray);
+        const pdf = await loadingTask.promise;
         const images: string[] = [];
 
-        // Process ALL pages, no limit.
         const numPages = pdf.numPages;
+        console.log(`Processing PDF: ${file.name}, Pages: ${numPages}`);
 
         for (let i = 1; i <= numPages; i++) {
-          const page = await pdf.getPage(i);
-          
-          // Set scale. 2.0 is good for OCR accuracy.
-          // If files are extremely large (>30 pages), we might consider lowering this to 1.5,
-          // but 2.0 ensures best text recognition for dense tables.
-          const viewport = page.getViewport({ scale: 2.0 });
-          
-          const canvas = document.createElement('canvas');
-          const context = canvas.getContext('2d');
-          canvas.height = viewport.height;
-          canvas.width = viewport.width;
+          try {
+            const page = await pdf.getPage(i);
+            
+            // Scale 2.0 provides good balance for OCR
+            const viewport = page.getViewport({ scale: 2.0 });
+            
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            
+            if (!context) {
+                throw new Error("Canvas context could not be created.");
+            }
 
-          if (!context) continue;
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
 
-          await page.render({
-            canvasContext: context,
-            viewport: viewport,
-          }).promise;
+            await page.render({
+              canvasContext: context,
+              viewport: viewport,
+            }).promise;
 
-          // Convert to base64 string
-          // Using 0.7 quality to keep payload size reasonable while maintaining legibility for OCR
-          const base64 = canvas.toDataURL('image/jpeg', 0.7);
-          
-          // Remove the data URL prefix for Gemini API
-          const cleanBase64 = base64.split(',')[1];
-          images.push(cleanBase64);
+            // Convert to base64
+            const base64 = canvas.toDataURL('image/jpeg', 0.8);
+            const cleanBase64 = base64.split(',')[1];
+            images.push(cleanBase64);
+          } catch (pageError) {
+            console.error(`Error processing page ${i}:`, pageError);
+            // We continue to next page even if one fails, to salvage data
+          }
+        }
+
+        if (images.length === 0) {
+            reject(new Error("No images could be extracted from the PDF."));
+            return;
         }
 
         resolve(images);
-      } catch (error) {
-        reject(error);
+      } catch (error: any) {
+        console.error("PDF Processing Error:", error);
+        reject(new Error(`PDF processing failed: ${error.message}`));
       }
     };
-    reader.onerror = reject;
+    reader.onerror = () => reject(new Error("Failed to read file."));
     reader.readAsArrayBuffer(file);
   });
 };

@@ -1,7 +1,8 @@
+
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { ExamData } from "../types";
 
-// Define the expected output schema for strict JSON response
+// Define the expected output schema
 const examDataSchema: Schema = {
   type: Type.ARRAY,
   description: "List of exam results for subjects found in the document.",
@@ -19,13 +20,13 @@ const examDataSchema: Schema = {
           score_80_89: { type: Type.INTEGER, description: "Count for 80-89 (80이상~90미만)" },
           score_70_79: { type: Type.INTEGER, description: "Count for 70-79" },
           score_60_69: { type: Type.INTEGER, description: "Count for 60-69" },
-          score_50_59: { type: Type.INTEGER, description: "Count for 50-59. If document groups 0-59, put 0 here." },
+          score_50_59: { type: Type.INTEGER, description: "Count for 50-59" },
           score_40_49: { type: Type.INTEGER, description: "Count for 40-49" },
           score_30_39: { type: Type.INTEGER, description: "Count for 30-39" },
           score_20_29: { type: Type.INTEGER, description: "Count for 20-29" },
           score_10_19: { type: Type.INTEGER, description: "Count for 10-19" },
           score_0_9: { type: Type.INTEGER, description: "Count for 0-9" },
-          score_under_60: { type: Type.INTEGER, description: "Use this ONLY if the document explicitly groups all scores under 60 into one bucket (e.g., 0~59)." }
+          score_under_60: { type: Type.INTEGER, description: "Explicit count for under 60 if grouped." }
         }
       }
     }
@@ -33,10 +34,14 @@ const examDataSchema: Schema = {
 };
 
 export const extractDataFromImages = async (base64Images: string[]): Promise<ExamData[]> => {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-if (!apiKey) {
-  throw new Error("API Key가 설정되지 않았습니다.");
-}
+  // STRICT API KEY ACCESS
+  const apiKey = process.env.API_KEY;
+
+  if (!apiKey) {
+    console.error("API Key is missing. Please ensure process.env.API_KEY is set.");
+    throw new Error("API Key configuration error. Please check environment variables.");
+  }
+  
   const ai = new GoogleGenAI({ apiKey });
   
   // Create parts array from images
@@ -49,7 +54,7 @@ if (!apiKey) {
 
   // Add the prompt
   parts.push({
-    // @ts-ignore - 'text' is valid in Part but types might be strict
+    // @ts-ignore
     text: `Analyze the provided exam analysis documents images as a SINGLE continuous sequence.
     
     TASK:
@@ -58,17 +63,18 @@ if (!apiKey) {
     CRITICAL INSTRUCTIONS FOR ACCURACY:
     1. **EXACT TEXT EXTRACTION**: Extract the subject name EXACTLY as written in the image. 
        - Do NOT normalize, correct, or translate the subject name.
-       - Do NOT guess. If it says "인공지능일반", return "인공지능일반". Do NOT change it to "생산관리" or any other subject.
+       - Do NOT guess. If it says "인공지능일반", return "인공지능일반".
        - If it says "제조화학", return "제조화학".
+       - If it says "생산관리", return "생산관리".
+       - Pay close attention to vocational subjects (e.g., 프로그래밍, 전자회로, 토목일반, 성공적인직업생활).
     2. **SCAN ALL PAGES**: The data often spans multiple pages. Process every single page and extract every row.
-    3. **ALL ROWS**: Do not skip any rows. If a table continues across pages, merge the extracted list.
+    3. **ALL ROWS**: Do not skip any rows.
     4. **COLUMNS**:
        - Subject is usually the first column.
        - Average is "평균".
        - Total is "응시자" or "합계".
        - Ranges are "90~100", "80~89", etc.
-    5. **Under 60**: If the table has a specific column for "0~59" or "60점 미만", put that value in 'score_under_60'. Otherwise, extract the specific 10-point ranges (50-59, 40-49, etc.).
-    6. **VOCATIONAL SUBJECTS**: Be extremely careful with vocational subjects (e.g., 프로그래밍, 전자회로, 토목일반, 성공적인직업생활). Ensure the name matches the image text 100%.`
+    5. **Under 60**: If the table has a column for "0~59", put that value in 'score_under_60'. Otherwise, extract the specific 10-point ranges.`
   });
 
   try {
@@ -78,19 +84,33 @@ if (!apiKey) {
       config: {
         responseMimeType: 'application/json',
         responseSchema: examDataSchema,
-        temperature: 0.0 // Set to 0.0 for maximum determinism and fidelity to source text
       }
     });
 
-    const jsonText = response.text;
-    if (!jsonText) return [];
+    let jsonText = response.text;
+    if (!jsonText) throw new Error("No data returned from AI.");
 
-    const rawData = JSON.parse(jsonText);
-    
-    return rawData;
+    // Clean Markdown code blocks if present (common issue with some models)
+    if (jsonText.startsWith("```json")) {
+        jsonText = jsonText.replace(/^```json\s*/, "").replace(/\s*```$/, "");
+    } else if (jsonText.startsWith("```")) {
+        jsonText = jsonText.replace(/^```\s*/, "").replace(/\s*```$/, "");
+    }
 
-  } catch (error) {
+    try {
+        const rawData = JSON.parse(jsonText);
+        return rawData;
+    } catch (parseError) {
+        console.error("JSON Parse Error. Raw Text:", jsonText);
+        throw new Error("Failed to parse AI response. The extracted data was not valid JSON.");
+    }
+
+  } catch (error: any) {
     console.error("Gemini Extraction Error:", error);
+    // enhance error message for UI
+    if (error.message.includes("401") || error.message.includes("key")) {
+        throw new Error("Invalid API Key. Please check your settings.");
+    }
     throw error;
   }
 };

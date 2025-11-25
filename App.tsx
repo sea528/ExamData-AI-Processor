@@ -1,3 +1,4 @@
+
 import React, { useState, useRef } from 'react';
 import { Upload, FileText, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { convertPdfToImages } from './utils/pdfUtils';
@@ -28,7 +29,7 @@ const App: React.FC = () => {
   };
 
   const processFiles = async (files: File[]) => {
-    if (isProcessing) return; // Simple queue lock, in real app use a proper queue effect
+    if (isProcessing) return;
     setIsProcessing(true);
 
     for (const file of files) {
@@ -46,8 +47,6 @@ const App: React.FC = () => {
 
         // 3. Update Data
         setExamData(prev => {
-          // Avoid duplicates if re-uploading same subject, strictly speaking tricky without ID
-          // Just appending for now, could filter by subject name later
           return [...prev, ...extractedResults];
         });
 
@@ -58,8 +57,15 @@ const App: React.FC = () => {
 
       } catch (error: any) {
         console.error(`Error processing ${file.name}:`, error);
+        
+        // Extract meaningful error message
+        let errorMessage = 'Failed to process';
+        if (error instanceof Error) {
+            errorMessage = error.message;
+        }
+        
         setProcessingQueue(prev => prev.map(item => 
-          item.fileName === file.name ? { ...item, status: 'error', message: error.message || 'Failed to process' } : item
+          item.fileName === file.name ? { ...item, status: 'error', message: errorMessage } : item
         ));
       }
     }
@@ -99,8 +105,10 @@ const App: React.FC = () => {
           </div>
 
           <div 
-            onClick={() => fileInputRef.current?.click()}
-            className="group relative border-2 border-dashed border-slate-300 rounded-2xl p-12 text-center hover:border-indigo-500 hover:bg-indigo-50/50 transition-all cursor-pointer bg-white"
+            onClick={() => !isProcessing && fileInputRef.current?.click()}
+            className={`group relative border-2 border-dashed border-slate-300 rounded-2xl p-12 text-center transition-all bg-white
+              ${isProcessing ? 'opacity-50 cursor-not-allowed' : 'hover:border-indigo-500 hover:bg-indigo-50/50 cursor-pointer'}
+            `}
           >
             <input 
               type="file" 
@@ -109,14 +117,19 @@ const App: React.FC = () => {
               ref={fileInputRef}
               className="hidden" 
               onChange={handleFileSelect}
+              disabled={isProcessing}
             />
             <div className="flex flex-col items-center gap-4">
               <div className="p-4 bg-indigo-50 text-indigo-600 rounded-full group-hover:scale-110 transition-transform">
-                <Upload className="w-8 h-8" />
+                {isProcessing ? <Loader2 className="w-8 h-8 animate-spin" /> : <Upload className="w-8 h-8" />}
               </div>
               <div>
-                <p className="text-lg font-semibold text-slate-900">PDF 파일 업로드 (다중 선택 가능)</p>
-                <p className="text-slate-500 text-sm mt-1">클릭하여 파일을 선택하거나 이곳으로 드래그하세요.</p>
+                <p className="text-lg font-semibold text-slate-900">
+                    {isProcessing ? '처리 중...' : 'PDF 파일 업로드 (다중 선택 가능)'}
+                </p>
+                <p className="text-slate-500 text-sm mt-1">
+                    {isProcessing ? '잠시만 기다려주세요.' : '클릭하여 파일을 선택하거나 이곳으로 드래그하세요.'}
+                </p>
               </div>
             </div>
           </div>
@@ -148,9 +161,14 @@ const App: React.FC = () => {
                       </span>
                     )}
                     {item.status === 'error' && (
-                      <span className="flex items-center gap-1 text-xs text-red-600 bg-red-50 px-2 py-1 rounded" title={item.message}>
-                        <AlertCircle className="w-3 h-3" /> 실패
-                      </span>
+                      <div className="text-right">
+                          <span className="flex items-center gap-1 text-xs text-red-600 bg-red-50 px-2 py-1 rounded justify-end">
+                            <AlertCircle className="w-3 h-3" /> 실패
+                          </span>
+                          <p className="text-[10px] text-red-500 mt-1 max-w-[200px] break-words">
+                            {item.message}
+                          </p>
+                      </div>
                     )}
                   </div>
                 </div>
