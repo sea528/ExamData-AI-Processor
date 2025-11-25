@@ -34,12 +34,20 @@ const examDataSchema: Schema = {
 };
 
 export const extractDataFromImages = async (base64Images: string[]): Promise<ExamData[]> => {
-  // STRICT API KEY ACCESS
-  const apiKey = process.env.API_KEY;
+  // Safe API Key access that won't crash browser if process is undefined
+  let apiKey: string | undefined;
+  try {
+    // Priority: process.env.API_KEY (Standard/Netlify)
+    if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
+      apiKey = process.env.API_KEY;
+    } 
+  } catch (e) {
+    console.warn("Could not access process.env");
+  }
 
   if (!apiKey) {
-    console.error("API Key is missing. Please ensure process.env.API_KEY is set.");
-    throw new Error("API Key configuration error. Please check environment variables.");
+    console.error("API Key is missing.");
+    throw new Error("API Key is missing. If you are on Netlify, go to Site Settings > Environment Variables and add 'API_KEY'.");
   }
   
   const ai = new GoogleGenAI({ apiKey });
@@ -68,7 +76,7 @@ export const extractDataFromImages = async (base64Images: string[]): Promise<Exa
        - If it says "생산관리", return "생산관리".
        - Pay close attention to vocational subjects (e.g., 프로그래밍, 전자회로, 토목일반, 성공적인직업생활).
     2. **SCAN ALL PAGES**: The data often spans multiple pages. Process every single page and extract every row.
-    3. **ALL ROWS**: Do not skip any rows.
+    3. **ALL ROWS**: Do not skip any rows. Even if the table format changes slightly, extract the data.
     4. **COLUMNS**:
        - Subject is usually the first column.
        - Average is "평균".
@@ -102,14 +110,18 @@ export const extractDataFromImages = async (base64Images: string[]): Promise<Exa
         return rawData;
     } catch (parseError) {
         console.error("JSON Parse Error. Raw Text:", jsonText);
-        throw new Error("Failed to parse AI response. The extracted data was not valid JSON.");
+        throw new Error("AI extraction failed: Invalid JSON response.");
     }
 
   } catch (error: any) {
     console.error("Gemini Extraction Error:", error);
-    // enhance error message for UI
-    if (error.message.includes("401") || error.message.includes("key")) {
-        throw new Error("Invalid API Key. Please check your settings.");
+    // Enhance error message for UI
+    if (error.message.includes("401") || error.message.includes("key") || error.message.includes("API Key")) {
+        throw new Error("Authentication Failed: Invalid API Key. Please check Netlify Environment Variables.");
+    }
+    // Handle specific Google API errors
+    if (error.message.includes("503") || error.message.includes("overloaded")) {
+        throw new Error("AI Service Overloaded. Please try again in a few seconds.");
     }
     throw error;
   }

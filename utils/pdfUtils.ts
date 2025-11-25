@@ -19,12 +19,21 @@ export const convertPdfToImages = async (file: File): Promise<string[]> => {
             return;
         }
 
-        // Explicitly force worker source if missing to prevent "FakeWorker" errors
+        // Explicitly force worker source if missing
+        // Using the exact version match for stability
         if (!window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
             window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
         }
 
-        const loadingTask = window.pdfjsLib.getDocument(typedarray);
+        // CRITICAL FOR KOREAN PDFS: Load CMaps to ensure text renders correctly
+        // Without this, Korean characters often render as empty boxes or whitespace
+        const loadingTask = window.pdfjsLib.getDocument({
+            data: typedarray,
+            cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
+            cMapPacked: true,
+            enableXfa: true, // Support XFA forms if present
+        });
+
         const pdf = await loadingTask.promise;
         const images: string[] = [];
 
@@ -35,7 +44,7 @@ export const convertPdfToImages = async (file: File): Promise<string[]> => {
           try {
             const page = await pdf.getPage(i);
             
-            // Scale 2.0 provides good balance for OCR
+            // Scale 2.0 provides good balance for OCR resolution vs file size
             const viewport = page.getViewport({ scale: 2.0 });
             
             const canvas = document.createElement('canvas');
@@ -54,17 +63,17 @@ export const convertPdfToImages = async (file: File): Promise<string[]> => {
             }).promise;
 
             // Convert to base64
-            const base64 = canvas.toDataURL('image/jpeg', 0.8);
+            const base64 = canvas.toDataURL('image/jpeg', 0.85);
             const cleanBase64 = base64.split(',')[1];
             images.push(cleanBase64);
           } catch (pageError) {
             console.error(`Error processing page ${i}:`, pageError);
-            // We continue to next page even if one fails, to salvage data
+            // We continue to next page even if one fails
           }
         }
 
         if (images.length === 0) {
-            reject(new Error("No images could be extracted from the PDF."));
+            reject(new Error("No images could be extracted from the PDF. The file might be corrupted or password protected."));
             return;
         }
 
