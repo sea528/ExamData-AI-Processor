@@ -4,33 +4,61 @@ import { GoogleGenAI } from "@google/genai";
 const getApiKey = (): string => {
   let key = "";
 
-  // 1. Vite 환경 변수 확인 (Netlify, Vercel 등)
+  // 1. Vite 및 최신 프론트엔드 환경 변수 우선 확인
+  const envCandidates = [
+    // @ts-ignore
+    typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_GEMINI_API_KEY : undefined,
+    // @ts-ignore
+    typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_API_KEY : undefined,
+    // @ts-ignore
+    typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.API_KEY : undefined,
+    // @ts-ignore
+    typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.REACT_APP_API_KEY : undefined,
+    // @ts-ignore
+    typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.NEXT_PUBLIC_API_KEY : undefined,
+  ];
+
+  // 2. process.env 확인 (레거시, Node.js, 일부 빌드 시스템)
   try {
     // @ts-ignore
-    if (typeof import.meta !== 'undefined' && import.meta.env) {
-      // @ts-ignore
-      key = import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_API_KEY || import.meta.env.API_KEY || "";
+    if (typeof process !== 'undefined' && process.env) {
+       // @ts-ignore
+       envCandidates.push(process.env.VITE_GEMINI_API_KEY);
+       // @ts-ignore
+       envCandidates.push(process.env.VITE_API_KEY);
+       // @ts-ignore
+       envCandidates.push(process.env.API_KEY);
+       // @ts-ignore
+       envCandidates.push(process.env.REACT_APP_API_KEY);
     }
   } catch (e) {}
 
-  // 2. process.env 확인 (Node.js, Webpack, 일부 빌드 도구)
-  if (!key) {
-    try {
-      // @ts-ignore
-      if (typeof process !== 'undefined' && process.env) {
-         // @ts-ignore
-         key = process.env.VITE_GEMINI_API_KEY || process.env.VITE_API_KEY || process.env.API_KEY || "";
-      }
-    } catch (e) {}
+  // 유효한 첫 번째 키 선택
+  key = envCandidates.find(k => k && typeof k === 'string') || "";
+
+  // 3. 강력한 정제 (Sanitization)
+  if (key) {
+    // 혹시 모를 URL 인코딩 해제
+    try { key = decodeURIComponent(key); } catch (e) {}
+
+    // 따옴표(", '), 공백(\s), 세미콜론(;), 줄바꿈 등 제거
+    key = key.replace(/["'\s;\n\r]/g, "");
+
+    // 사용자가 실수로 "API_KEY=AIza..." 형태로 값 전체를 복사해 넣었을 경우 처리
+    if (key.includes("=")) {
+        const parts = key.split("=");
+        // 등호 뒤의 값이 실제 키일 가능성이 높음
+        if (parts.length > 1) {
+            key = parts[parts.length - 1];
+        }
+    }
   }
 
-  // 3. 키 정제 (공백 및 따옴표 제거)
+  // 디버깅용 로그 (키 유출 방지를 위해 일부만 출력)
   if (key) {
-    key = key.trim();
-    // 실수로 따옴표가 포함된 경우 제거 (예: '"AIza..."')
-    if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
-      key = key.slice(1, -1);
-    }
+      console.log(`[ExamData AI] API Key detected. Length: ${key.length}, Prefix: ${key.substring(0, 4)}***`);
+  } else {
+      console.warn("[ExamData AI] No API Key found in environment variables.");
   }
 
   return key;
@@ -41,12 +69,12 @@ export async function extractDataFromImages(images: string[]) {
 
   // 기본 유효성 검사
   if (!apiKey) {
-    throw new Error("API 키가 설정되지 않았습니다. Netlify Site Settings > Environment Variables에서 'VITE_GEMINI_API_KEY' 값을 설정해주세요.");
+    throw new Error("API 키가 감지되지 않았습니다. Netlify Site Settings > Environment Variables에서 'API_KEY' 또는 'VITE_API_KEY'를 설정해주세요.");
   }
 
-  // 구글 API 키는 보통 'AIza'로 시작합니다. 간단한 형식 체크.
+  // 구글 API 키 형식 검사 (AIza로 시작하지 않으면 경고하지만 막지는 않음 - 프록시 등 예외 상황 고려)
   if (!apiKey.startsWith("AIza")) {
-     console.warn("경고: API 키가 'AIza'로 시작하지 않습니다. 키 값이 올바른지 확인하세요.");
+     console.warn("경고: API 키가 'AIza'로 시작하지 않습니다. 키 값이 올바른지 확인하세요. 현재 키 값(일부): " + apiKey.substring(0, 3) + "...");
   }
 
   // 최신 SDK 초기화
@@ -145,7 +173,7 @@ export async function extractDataFromImages(images: string[]) {
     // 에러 메시지 분석
     const errorString = error.toString();
     if (errorString.includes("400") || errorString.includes("INVALID_ARGUMENT") || errorString.includes("API key not valid")) {
-      userMessage = "API 키가 올바르지 않습니다 (400 Invalid Argument). Netlify 설정의 API Key 값에 오타나 공백, 따옴표가 없는지 확인해주세요.";
+      userMessage = "API 키 형식이 올바르지 않습니다 (400 Invalid Argument). Netlify 변수 설정에서 값에 따옴표(\")나 변수명(API_KEY=)이 포함되어 있지 않은지 확인하세요.";
     } else if (errorString.includes("403")) {
       userMessage = "API 키 권한이 없거나 만료되었습니다 (403 Forbidden).";
     } else if (errorString.includes("429")) {
