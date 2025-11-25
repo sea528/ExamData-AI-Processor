@@ -34,19 +34,22 @@ const examDataSchema: Schema = {
 };
 
 export const extractDataFromImages = async (base64Images: string[]): Promise<ExamData[]> => {
-  // Safe API Key access that won't crash browser if process is undefined
   let apiKey: string | undefined;
+
+  // DIRECT ACCESS: 
+  // We explicitly try to access process.env.API_KEY without checking if 'process' is defined first.
+  // This allows bundlers (like Vite/Webpack) to replace "process.env.API_KEY" with the actual string literal 
+  // at build time, even if the "process" global object does not exist in the browser.
   try {
-    // Priority: process.env.API_KEY (Standard/Netlify)
-    if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
-      apiKey = process.env.API_KEY;
-    } 
+    // @ts-ignore
+    apiKey = process.env.API_KEY;
   } catch (e) {
-    console.warn("Could not access process.env");
+    // Ignore ReferenceError if process is not defined and not replaced
+    console.debug("process.env.API_KEY access failed (normal in local dev if not mocked)", e);
   }
 
   if (!apiKey) {
-    console.error("API Key is missing.");
+    console.error("API Key is missing. Value of process.env.API_KEY is undefined.");
     throw new Error("API Key is missing. If you are on Netlify, go to Site Settings > Environment Variables and add 'API_KEY'.");
   }
   

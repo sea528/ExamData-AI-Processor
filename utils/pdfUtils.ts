@@ -6,6 +6,11 @@ declare global {
   }
 }
 
+// Configure worker immediately upon module load to prevent race conditions
+if (typeof window !== 'undefined' && window.pdfjsLib) {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+
 export const convertPdfToImages = async (file: File): Promise<string[]> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -19,8 +24,7 @@ export const convertPdfToImages = async (file: File): Promise<string[]> => {
             return;
         }
 
-        // Explicitly force worker source if missing
-        // Using the exact version match for stability
+        // Re-enforce worker source in case it wasn't set globally earlier
         if (!window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
             window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
         }
